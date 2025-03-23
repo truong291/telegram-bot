@@ -8,8 +8,8 @@ const telegramToken = process.env.TELEGRAM_TOKEN;
 const bscScanApiKey = process.env.BSCSCAN_API_KEY;
 const bot = new TelegramBot(telegramToken, { polling: false });
 
-// Dùng HTTP Provider
-const provider = new ethers.providers.JsonRpcProvider("https://bsc-dataseed.binance.org/");
+// Dùng HTTP Provider mới
+const provider = new ethers.providers.JsonRpcProvider("https://bsc-dataseed1.defibit.io/");
 
 const tokenManager2Address = "0x5c952063c7fc8610FFDB798152D69F0B9550762b";
 const tokenManager2ABI = ["event LiquidityAdded(address base, uint256 offers, address quote, uint256 funds)"];
@@ -164,7 +164,9 @@ async function startBot() {
   let lastBlock = await provider.getBlockNumber();
   console.log(`Bắt đầu polling từ block ${lastBlock}`);
 
-  // Polling để kiểm tra sự kiện LiquidityAdded (4 lần/giây)
+  let retryDelay = 1000; // Thời gian chờ ban đầu: 1 giây (1000ms)
+
+  // Polling để kiểm tra sự kiện LiquidityAdded
   setInterval(async () => {
     try {
       const currentBlock = await provider.getBlockNumber();
@@ -178,10 +180,17 @@ async function startBot() {
         await processLiquidityAddedEvent(base, offers, quote, funds);
       }
       lastBlock = currentBlock + 1;
+      retryDelay = 1000; // Reset thời gian chờ nếu thành công
     } catch (error) {
       console.error("Lỗi polling:", error.message);
+      if (error.message.includes("limit exceeded")) {
+        retryDelay *= 2; // Tăng thời gian chờ nếu gặp lỗi limit exceeded
+        console.log(`Gặp lỗi limit exceeded, tăng thời gian chờ lên ${retryDelay}ms`);
+        if (retryDelay > 10000) retryDelay = 10000; // Giới hạn tối đa 10 giây
+      }
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
     }
-  }, 250); // Polling mỗi 250ms (4 lần/giây)
+  }, retryDelay); // Thời gian polling sẽ thay đổi động
 
   // Bắt đầu thu thập chat_ids
   collectChatIds();
