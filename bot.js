@@ -8,8 +8,8 @@ const telegramToken = process.env.TELEGRAM_TOKEN;
 const bscScanApiKey = process.env.BSCSCAN_API_KEY;
 const bot = new TelegramBot(telegramToken, { polling: false });
 
-// Dùng HTTP Provider mới
-const provider = new ethers.providers.JsonRpcProvider("https://bsc-dataseed1.defibit.io/");
+// Dùng WebSocket Provider từ Moralis (thay bằng endpoint của bạn)
+const provider = new ethers.providers.WebSocketProvider("wss://site1.moralis-nodes.com/bsc/ab22fada72a84a21a2d482495e50f299");
 
 const tokenManager2Address = "0x5c952063c7fc8610FFDB798152D69F0B9550762b";
 const tokenManager2ABI = ["event LiquidityAdded(address base, uint256 offers, address quote, uint256 funds)"];
@@ -18,7 +18,6 @@ const contract = new ethers.Contract(tokenManager2Address, tokenManager2ABI, pro
 const tokenABI = [
   "function name() view returns (string)",
   "function symbol() view returns (string)",
-  "function totalSupply() view returns (uint256)",
   "function owner() view returns (address)"
 ];
 
@@ -82,10 +81,9 @@ async function getTokenImageUrl(contractAddress) {
 async function processLiquidityAddedEvent(base, offers, quote, funds) {
   try {
     const tokenContract = new ethers.Contract(base, tokenABI, provider);
-    const [name, symbol, totalSupply, devAddress] = await Promise.all([
+    const [name, symbol, devAddress] = await Promise.all([
       tokenContract.name(),
       tokenContract.symbol(),
-      tokenContract.totalSupply(),
       tokenContract.owner().catch(() => "Không xác định")
     ]);
 
@@ -93,13 +91,9 @@ async function processLiquidityAddedEvent(base, offers, quote, funds) {
       `https://api.bscscan.com/api?module=token&action=tokenholderlist&contractaddress=${base}&page=1&offset=10&apikey=${bscScanApiKey}`
     );
     const holders = holdersRes.data.result;
-    let totalTop10Percent = 0;
     let holdersText = "";
     holders.forEach((holder) => {
-      const percentage = (holder.value / totalSupply.toString()) * 100;
-      totalTop10Percent += percentage;
-      const isDev = holder.address.toLowerCase() === devAddress.toLowerCase() ? " (dev)" : "";
-      holdersText += `[${percentage.toFixed(2)}%]${isDev}(https://bscscan.com/address/${holder.address}) | `;
+      holdersText += `[Holder](https://bscscan.com/address/${holder.address}) | `;
     });
     holdersText = holdersText.slice(0, -3);
 
@@ -120,7 +114,7 @@ async function processLiquidityAddedEvent(base, offers, quote, funds) {
 Name: ${name}
 Symbol: ${symbol}
 Contract: \`${base}\`
-Top 10 holders: (Tổng: ${totalTop10Percent.toFixed(2)}%)
+Top 10 holders:
   ${holdersText}
 Creator: [${devAddress}](https://bscscan.com/address/${devAddress}) - Balance: ${devBalance} BNB
 Social: ${socialText}
@@ -160,37 +154,21 @@ Chart: [Dextscreen](https://dexscreener.com/bsc/${base}) | [Mevx](https://mevx.i
 }
 
 async function startBot() {
-  // Lấy block khởi tạo
-  let lastBlock = await provider.getBlockNumber();
-  console.log(`Bắt đầu polling từ block ${lastBlock}`);
+  // Lắng nghe sự kiện LiquidityAdded với WebSocket
+  contract.on("LiquidityAdded", async (base, offers, quote, funds, event) => {
+    console.log(`Phát hiện sự kiện LiquidityAdded: ${base}`);
+    await processLiquidityAddedEvent(base, offers, quote, funds);
+  });
 
-  let retryDelay = 1000; // Thời gian chờ ban đầu: 1 giây (1000ms)
+  // Xử lý lỗi WebSocket
+  provider._websocket.on("error", (error) => {
+    console.error("Lỗi WebSocket:", error.message);
+  });
 
-  // Polling để kiểm tra sự kiện LiquidityAdded
-  setInterval(async () => {
-    try {
-      const currentBlock = await provider.getBlockNumber();
-      if (currentBlock <= lastBlock) return; // Không có block mới
-
-      console.log(`Kiểm tra sự kiện từ block ${lastBlock} đến ${currentBlock}`);
-      const events = await contract.queryFilter("LiquidityAdded", lastBlock, currentBlock);
-      for (const event of events) {
-        const { base, offers, quote, funds } = event.args;
-        console.log(`Phát hiện sự kiện LiquidityAdded: ${base}`);
-        await processLiquidityAddedEvent(base, offers, quote, funds);
-      }
-      lastBlock = currentBlock + 1;
-      retryDelay = 1000; // Reset thời gian chờ nếu thành công
-    } catch (error) {
-      console.error("Lỗi polling:", error.message);
-      if (error.message.includes("limit exceeded")) {
-        retryDelay *= 2; // Tăng thời gian chờ nếu gặp lỗi limit exceeded
-        console.log(`Gặp lỗi limit exceeded, tăng thời gian chờ lên ${retryDelay}ms`);
-        if (retryDelay > 10000) retryDelay = 10000; // Giới hạn tối đa 10 giây
-      }
-      await new Promise(resolve => setTimeout(resolve, retryDelay));
-    }
-  }, retryDelay); // Thời gian polling sẽ thay đổi động
+  provider._websocket.on("close", () => {
+    console.error("Kết nối WebSocket bị đóng, thử kết nối lại...");
+    setTimeout(startBot, 5000); // Thử lại sau 5 giây
+  });
 
   // Bắt đầu thu thập chat_ids
   collectChatIds();
