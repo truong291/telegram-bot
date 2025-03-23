@@ -8,8 +8,8 @@ const telegramToken = process.env.TELEGRAM_TOKEN;
 const bscScanApiKey = process.env.BSCSCAN_API_KEY;
 const bot = new TelegramBot(telegramToken, { polling: false });
 
-// Dùng WebSocket Provider từ Moralis (thay bằng endpoint của bạn)
-const provider = new ethers.providers.WebSocketProvider("wss://site1.moralis-nodes.com/bsc/ab22fada72a84a21a2d482495e50f299");
+// Dùng WebSocket Provider từ QuickNode
+const provider = new ethers.providers.WebSocketProvider("wss://fabled-withered-frost.bsc.quiknode.pro/69d9d850c37e37ac5001dc27c72221c55c6cff25/");
 
 const tokenManager2Address = "0x5c952063c7fc8610FFDB798152D69F0B9550762b";
 const tokenManager2ABI = ["event LiquidityAdded(address base, uint256 offers, address quote, uint256 funds)"];
